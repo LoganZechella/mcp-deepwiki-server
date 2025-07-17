@@ -2,55 +2,109 @@
 import fetch from "node-fetch";
 import * as cheerio from "cheerio";
 import { createLogger } from "../utils/logger.js";
+import { createEnhancedLogger } from "../utils/enhanced-logger.js";
 import { sanitizeHtml } from "../utils/html-sanitizer.js";
 import { DeepWikiUrlInfo, DeepWikiPage, DeepWikiResult } from "../types/index.js";
+import { getCache } from "./cache-service.js";
+import { retry, CircuitBreaker, RetryConditions } from "../utils/retry.js";
+import { ConcurrencyQueue, RateLimiter } from "../utils/concurrency.js";
 
 const logger = createLogger("deepwiki-fetcher");
+const enhancedLogger = createEnhancedLogger("deepwiki-fetcher");
 
 /**
- * Service for fetching and processing DeepWiki content
+ * Service for fetching and processing DeepWiki content with enhanced capabilities
  */
 export class DeepWikiFetcher {
   private readonly baseUrl = "https://deepwiki.com";
   private readonly allowedDomains = ["deepwiki.com"];
   private readonly userAgent = "MCP-DeepWiki-Server/1.0.0";
+  private readonly cache = getCache();
+  private readonly circuitBreaker = new CircuitBreaker({
+    failureThreshold: 5,
+    resetTimeout: 60000, // 1 minute
+    monitoringPeriod: 10000 // 10 seconds
+  });
+  private readonly concurrencyQueue = new ConcurrencyQueue({
+    maxConcurrent: 5,
+    timeout: 30000
+  });
+  private readonly rateLimiter = new RateLimiter(10, 2); // 10 requests per 2 seconds
 
   /**
-   * Fetch aggregated content from DeepWiki
+   * Fetch aggregated content from DeepWiki with caching and enhanced error handling
    */
   async fetchAggregated(urlInfo: DeepWikiUrlInfo, maxDepth: number): Promise<DeepWikiResult> {
-    const pages = await this.fetchAllPages(urlInfo, maxDepth);
+    const cacheKey = `aggregated:${urlInfo.owner}/${urlInfo.repo}:${maxDepth}`;
     
-    const aggregatedContent = pages
-      .map(page => `# ${page.title}\n\n${page.content}`)
-      .join('\n\n---\n\n');
+    return enhancedLogger.time('fetchAggregated', async () => {
+      // Try cache first
+      const cached = await this.cache.get<DeepWikiResult>(cacheKey);
+      if (cached) {
+        enhancedLogger.info('Cache hit for aggregated content', { 
+          repository: `${urlInfo.owner}/${urlInfo.repo}`,
+          maxDepth 
+        });
+        return cached;
+      }
 
-    return {
-      repository: `${urlInfo.owner}/${urlInfo.repo}`,
-      mode: "aggregate",
-      content: aggregatedContent,
-      pageCount: pages.length,
-      fetchedAt: new Date().toISOString()
-    };
+      const pages = await this.fetchAllPages(urlInfo, maxDepth);
+      
+      const aggregatedContent = pages
+        .map(page => `# ${page.title}\n\n${page.content}`)
+        .join('\n\n---\n\n');
+
+      const result: DeepWikiResult = {
+        repository: `${urlInfo.owner}/${urlInfo.repo}`,
+        mode: "aggregate",
+        content: aggregatedContent,
+        pageCount: pages.length,
+        fetchedAt: new Date().toISOString()
+      };
+
+      // Cache the result for 1 hour
+      await this.cache.set(cacheKey, result, 60 * 60 * 1000);
+      
+      return result;
+    });
   }
 
   /**
-   * Fetch structured pages from DeepWiki
+   * Fetch structured pages from DeepWiki with caching and enhanced error handling
    */
   async fetchPages(urlInfo: DeepWikiUrlInfo, maxDepth: number): Promise<DeepWikiResult> {
-    const pages = await this.fetchAllPages(urlInfo, maxDepth);
+    const cacheKey = `pages:${urlInfo.owner}/${urlInfo.repo}:${maxDepth}`;
+    
+    return enhancedLogger.time('fetchPages', async () => {
+      // Try cache first
+      const cached = await this.cache.get<DeepWikiResult>(cacheKey);
+      if (cached) {
+        enhancedLogger.info('Cache hit for pages content', { 
+          repository: `${urlInfo.owner}/${urlInfo.repo}`,
+          maxDepth 
+        });
+        return cached;
+      }
 
-    return {
-      repository: `${urlInfo.owner}/${urlInfo.repo}`,
-      mode: "pages",
-      pages: pages,
-      pageCount: pages.length,
-      fetchedAt: new Date().toISOString()
-    };
+      const pages = await this.fetchAllPages(urlInfo, maxDepth);
+
+      const result: DeepWikiResult = {
+        repository: `${urlInfo.owner}/${urlInfo.repo}`,
+        mode: "pages",
+        pages: pages,
+        pageCount: pages.length,
+        fetchedAt: new Date().toISOString()
+      };
+
+      // Cache the result for 1 hour
+      await this.cache.set(cacheKey, result, 60 * 60 * 1000);
+      
+      return result;
+    });
   }
 
   /**
-   * Fetch all pages for a repository
+   * Fetch all pages for a repository with concurrent processing
    */
   private async fetchAllPages(urlInfo: DeepWikiUrlInfo, maxDepth: number): Promise<DeepWikiPage[]> {
     const baseUrl = `${this.baseUrl}/${urlInfo.owner}/${urlInfo.repo}`;
@@ -58,47 +112,84 @@ export class DeepWikiFetcher {
     const pages: DeepWikiPage[] = [];
     const queue: { url: string; depth: number }[] = [{ url: baseUrl, depth: 0 }];
 
-    logger.info(`Fetching pages for ${urlInfo.owner}/${urlInfo.repo} (maxDepth: ${maxDepth})`);
+    enhancedLogger.info(`Fetching pages for ${urlInfo.owner}/${urlInfo.repo}`, { maxDepth });
 
     while (queue.length > 0 && pages.length < 100) { // Safety limit
-      const { url, depth } = queue.shift()!;
+      // Process current batch concurrently
+      const currentBatch = queue.splice(0, Math.min(5, queue.length));
+      const batchTasks = currentBatch
+        .filter(({ url, depth }) => !visited.has(url) && depth <= maxDepth)
+        .map(({ url, depth }) => {
+          visited.add(url);
+          return () => this.fetchSinglePageWithRetry(url, depth);
+        });
 
-      if (visited.has(url) || depth > maxDepth) {
-        continue;
-      }
+      if (batchTasks.length === 0) continue;
 
-      visited.add(url);
-
-      try {
-        const page = await this.fetchSinglePage(url, depth);
-        if (page) {
+      const batchResults = await this.concurrencyQueue.addAllSettled(batchTasks);
+      
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled' && result.value) {
+          const page = result.value;
           pages.push(page);
           
           // Extract links for further crawling
-          if (depth < maxDepth) {
+          if (page.depth < maxDepth) {
             const links = this.extractLinks(page.rawHtml, baseUrl);
             for (const link of links) {
               if (!visited.has(link)) {
-                queue.push({ url: link, depth: depth + 1 });
+                queue.push({ url: link, depth: page.depth + 1 });
               }
             }
           }
+        } else if (result.status === 'rejected') {
+          enhancedLogger.warn('Failed to fetch page in batch', { error: result.reason });
         }
-      } catch (error) {
-        logger.warn(`Failed to fetch page ${url}:`, error);
       }
     }
 
-    logger.info(`Fetched ${pages.length} pages for ${urlInfo.owner}/${urlInfo.repo}`);
+    enhancedLogger.info(`Fetched ${pages.length} pages for ${urlInfo.owner}/${urlInfo.repo}`, {
+      pageCount: pages.length,
+      repository: `${urlInfo.owner}/${urlInfo.repo}`
+    });
     return pages;
   }
 
   /**
-   * Fetch a single page from DeepWiki
+   * Fetch a single page with retry logic and circuit breaker
+   */
+  private async fetchSinglePageWithRetry(url: string, depth: number): Promise<DeepWikiPage | null> {
+    const cacheKey = `page:${url}`;
+    
+    // Check cache first
+    const cached = await this.cache.get<DeepWikiPage>(cacheKey);
+    if (cached) {
+      enhancedLogger.debug('Cache hit for single page', { url, depth });
+      return cached;
+    }
+
+    return this.circuitBreaker.execute(async () => {
+      return retry(
+        () => this.fetchSinglePage(url, depth),
+        {
+          maxAttempts: 3,
+          baseDelay: 1000,
+          backoffFactor: 2,
+          retryCondition: RetryConditions.networkAndServerErrors
+        }
+      );
+    });
+  }
+
+  /**
+   * Fetch a single page from DeepWiki with rate limiting
    */
   private async fetchSinglePage(url: string, depth: number): Promise<DeepWikiPage | null> {
+    // Apply rate limiting
+    await this.rateLimiter.acquire();
+    
     try {
-      logger.debug(`Fetching page: ${url} (depth: ${depth})`);
+      enhancedLogger.debug(`Fetching page: ${url}`, { depth });
 
       const response = await fetch(url, {
         headers: {
@@ -113,7 +204,10 @@ export class DeepWikiFetcher {
       });
 
       if (!response.ok) {
-        logger.warn(`HTTP ${response.status} for ${url}`);
+        enhancedLogger.warn(`HTTP ${response.status} for ${url}`, { 
+          status: response.status,
+          statusText: response.statusText 
+        });
         return null;
       }
 
@@ -134,7 +228,7 @@ export class DeepWikiFetcher {
       const sanitizedContent = sanitizeHtml(content);
       const textContent = this.htmlToMarkdown(sanitizedContent);
 
-      return {
+      const page: DeepWikiPage = {
         url,
         title,
         content: textContent,
@@ -143,9 +237,15 @@ export class DeepWikiFetcher {
         fetchedAt: new Date().toISOString()
       };
 
+      // Cache the page for 30 minutes
+      const cacheKey = `page:${url}`;
+      await this.cache.set(cacheKey, page, 30 * 60 * 1000);
+
+      return page;
+
     } catch (error) {
-      logger.error(`Error fetching page ${url}:`, error);
-      return null;
+      enhancedLogger.error(`Error fetching page ${url}`, error as Error, { depth });
+      throw error; // Re-throw for retry logic
     }
   }
 

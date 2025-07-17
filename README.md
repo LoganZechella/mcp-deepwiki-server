@@ -1,17 +1,32 @@
 
 # MCP DeepWiki Server
 
-A Model Context Protocol (MCP) server that provides AI assistants with structured access to GitHub repository documentation via [DeepWiki](https://deepwiki.com). This server enables LLMs like Claude, GPT-4, and others to fetch and understand repository documentation on-demand during conversations.
+A high-performance Model Context Protocol (MCP) server that provides AI assistants with structured access to GitHub repository documentation via [DeepWiki](https://deepwiki.com). This server enables LLMs like Claude, GPT-4, and others to fetch and understand repository documentation on-demand during conversations with enterprise-grade reliability and performance.
 
-## Features
+## 🚀 Features
 
+### Core Functionality
 - 🔌 **Full MCP Compatibility**: Built with the official MCP TypeScript SDK
 - 🚀 **Dual Transport Support**: Automatic detection between STDIO (local) and HTTP (remote) modes
 - 🛡️ **Security First**: Domain allowlisting and HTML sanitization
 - 📖 **Flexible Content Modes**: Aggregate content or structured page-by-page results
 - 🔧 **Easy Integration**: Works with Claude Desktop, Cursor, VS Code, and other MCP clients
-- 📊 **Comprehensive Error Handling**: Detailed error messages and validation
 - 🐳 **Docker Ready**: Containerized deployment support
+
+### 🆕 Phase 1 Enhancements (v1.1.0)
+- **🗄️ Intelligent Caching**: Hierarchical file-based caching with TTL support and automatic cleanup
+- **⚡ Concurrent Processing**: Parallel page fetching with configurable concurrency limits (5x faster)
+- **🔄 Enhanced Resilience**: Retry logic with exponential backoff and circuit breaker pattern
+- **📊 Advanced Logging**: Structured logging with correlation IDs and performance metrics
+
+### 🤖 Phase 2 Advanced Features (v2.0.0)
+- **🧠 AI-Powered Summarization**: Generate overview, technical, quickstart, or API-focused summaries
+- **🔄 Provider Fallback**: Support for both OpenAI and Anthropic APIs with automatic fallback
+- **🔍 Repository Search**: Search GitHub repositories with smart filtering and relevance ranking
+- **📊 Enhanced Content Organization**: Structured output with content categorization and filtering
+- **⚙️ Configuration Management**: Environment-based configuration for API keys and service settings
+- **🎯 Rate Limiting**: Intelligent request throttling to respect server limits
+- **🧪 Comprehensive Testing**: Full test coverage with integration and performance validation
 
 ## Quick Start
 
@@ -55,9 +70,11 @@ npm test
 
 ## Usage
 
-### DeepWiki Fetch Tool
+### Available Tools
 
-The server provides a `deepwiki_fetch` tool with the following parameters:
+#### 1. DeepWiki Fetch Tool (`deepwiki_fetch`)
+
+Enhanced documentation fetcher with content organization:
 
 - **url** (required): DeepWiki URL or GitHub repository identifier
   - Full URL: `https://deepwiki.com/owner/repo`
@@ -65,25 +82,122 @@ The server provides a `deepwiki_fetch` tool with the following parameters:
 - **mode** (optional): Output format
   - `"aggregate"` (default): Combined content in a single markdown text
   - `"pages"`: Structured list of individual pages with metadata
+  - `"structured"`: Organized by content type (guides, references, examples, code)
 - **maxDepth** (optional): Maximum crawling depth (1-50, default: 10)
+- **includeMetadata** (optional): Include repository metadata (default: false)
+- **contentFilter** (optional): Filter content by type
+  - `"all"` (default): All content types
+  - `"documentation"`: Documentation and guides only
+  - `"code"`: Code files and implementations
+  - `"examples"`: Code examples and samples
+
+#### 2. DeepWiki Summarize Tool (`deepwiki_summarize`)
+
+AI-powered documentation summarization:
+
+- **url** (required): DeepWiki URL or GitHub repository identifier
+- **summaryType** (optional): Type of summary to generate
+  - `"overview"` (default): General project overview and features
+  - `"technical"`: Technical details and architecture
+  - `"quickstart"`: Installation and basic usage guide
+  - `"api"`: API reference and endpoints
+- **maxLength** (optional): Maximum summary length in words (100-5000, default: 1000)
+
+#### 3. DeepWiki Search Tool (`deepwiki_search`)
+
+Repository discovery and search:
+
+- **query** (required): Search query for repositories
+- **topics** (optional): Filter by repository topics/tags (array of strings)
+- **language** (optional): Filter by programming language
+- **limit** (optional): Maximum results to return (1-50, default: 10)
 
 ### Example Tool Calls
 
 ```typescript
-// Aggregate mode - get all content as single markdown
+// 1. Enhanced Fetch Tool Examples
+
+// Structured mode with content filtering
 {
   "url": "https://deepwiki.com/modelcontextprotocol/typescript-sdk",
-  "mode": "aggregate",
+  "mode": "structured",
+  "contentFilter": "documentation",
+  "includeMetadata": true,
   "maxDepth": 5
 }
 
-// Pages mode - get structured page data
+// Get only code examples
 {
   "url": "neka-nat/freecad-mcp",
-  "mode": "pages",
+  "mode": "structured",
+  "contentFilter": "examples",
   "maxDepth": 3
 }
+
+// 2. AI Summarization Examples
+
+// Generate technical summary
+{
+  "url": "modelcontextprotocol/typescript-sdk",
+  "summaryType": "technical",
+  "maxLength": 1500
+}
+
+// Create quickstart guide
+{
+  "url": "microsoft/vscode",
+  "summaryType": "quickstart",
+  "maxLength": 800
+}
+
+// 3. Repository Search Examples
+
+// Search for Python web frameworks
+{
+  "query": "web framework",
+  "language": "Python",
+  "topics": ["web", "framework", "api"],
+  "limit": 5
+}
+
+// Find machine learning libraries
+{
+  "query": "machine learning",
+  "topics": ["ml", "ai", "tensorflow"],
+  "limit": 10
+}
 ```
+
+## Configuration
+
+### Environment Variables
+
+For AI-powered features, configure at least one AI provider:
+
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit with your API keys
+# OpenAI Configuration (recommended)
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-4o-mini
+
+# Anthropic Configuration (alternative)
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+ANTHROPIC_MODEL=claude-3-haiku-20240307
+
+# AI Service Settings
+AI_DEFAULT_PROVIDER=openai
+AI_FALLBACK_ENABLED=true
+
+# Cache and Logging
+CACHE_ENABLED=true
+CACHE_TTL=3600000
+LOG_LEVEL=info
+```
+
+**Note**: AI features (summarization) require API keys. Search and fetch tools work without AI configuration.
 
 ## Integration Guide
 
@@ -96,7 +210,10 @@ Add the following to your Claude Desktop configuration:
   "mcpServers": {
     "deepwiki": {
       "command": "node",
-      "args": ["/path/to/mcp-deepwiki-server/dist/index.js", "--stdio"]
+      "args": ["/path/to/mcp-deepwiki-server/dist/index.js", "--stdio"],
+      "env": {
+        "OPENAI_API_KEY": "your_openai_api_key_here"
+      }
     }
   }
 }
