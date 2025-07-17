@@ -1,0 +1,10 @@
+
+{
+  "github.copilot.mcp.servers": {
+    "deepwiki": {
+      "command": "node",
+      "args": ["/path/to/mcp-deepwiki-server/dist/index.js", "--stdio"],
+      "description": "DeepWiki documentation fetcher for GitHub repositories"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+
+{
+  "mcpServers": {
+    "deepwiki": {
+      "command": "node",
+      "args": ["/path/to/mcp-deepwiki-server/dist/index.js", "--stdio"],
+      "env": {
+        "DEBUG": "false"
+      }
+    }
+  }
+}
