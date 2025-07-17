@@ -162,7 +162,7 @@ export class AIService {
     if (config.ai.openai?.apiKey) {
       const openaiProvider = new OpenAIProvider(
         config.ai.openai.apiKey,
-        config.ai.openai.model || 'gpt-4o-mini',
+        config.ai.openai.model || 'o4-mini-2025-04-16',
         config.ai.openai.baseUrl
       );
       availableProviders.push(openaiProvider);
@@ -173,7 +173,7 @@ export class AIService {
     if (config.ai.anthropic?.apiKey) {
       const anthropicProvider = new AnthropicProvider(
         config.ai.anthropic.apiKey,
-        config.ai.anthropic.model || 'claude-3-haiku-20240307',
+        config.ai.anthropic.model || 'claude-4-sonnet-20250514',
         config.ai.anthropic.baseUrl
       );
       availableProviders.push(anthropicProvider);
