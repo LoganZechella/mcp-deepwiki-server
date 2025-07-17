@@ -1,4 +1,3 @@
-
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { DeepWikiFetcher } from "../services/deepwiki-fetcher.js";
@@ -35,12 +34,12 @@ export function registerDeepWikiTool(server: McpServer): void {
     },
     async (args: { url: string; mode?: "aggregate" | "pages" | undefined; maxDepth?: number | undefined }) => {
       try {
-        // Apply defaults and validate
-        const validated = {
+        // Validate input using Zod for runtime validation
+        const validated = DeepWikiFetchSchema.parse({
           url: args.url,
-          mode: args.mode || "aggregate" as const,
-          maxDepth: args.maxDepth || 10
-        };
+          mode: args.mode,
+          maxDepth: args.maxDepth
+        });
 
         logger.info(`DeepWiki fetch requested: ${validated.url} (mode: ${validated.mode}, maxDepth: ${validated.maxDepth})`);
         

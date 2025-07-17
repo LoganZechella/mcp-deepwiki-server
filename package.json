@@ -1,15 +1,20 @@
 {
   "name": "mcp-deepwiki-server",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "dev": "tsx src/index.ts --stdio",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist",
+    "watch": "tsc --watch",
+    "test": "tsx src/test.ts"
   },
-  "keywords": [],
+  "keywords": ["mcp", "deepwiki", "documentation", "github"],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "MCP server for fetching GitHub repository documentation from DeepWiki",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.1",
     "cheerio": "^1.1.0",
