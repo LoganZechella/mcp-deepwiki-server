@@ -2,7 +2,7 @@
 {
   "mcpServers": {
     "deepwiki": {
-      "command": "node",
+      "command": "/opt/homebrew/bin/node",
       "args": ["/path/to/mcp-deepwiki-server/dist/index.js", "--stdio"],
       "env": {
         "LOG_LEVEL": "info"
