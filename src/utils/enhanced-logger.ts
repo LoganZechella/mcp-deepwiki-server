@@ -228,6 +228,11 @@ export class EnhancedLogger {
   }
 
   private output(entry: LogEntry): void {
+    // Skip console output in STDIO mode to avoid corrupting MCP protocol
+    if (this.isStdioMode()) {
+      return;
+    }
+
     const formatted = this.formatEntry(entry);
     
     switch (entry.level) {
@@ -249,6 +254,18 @@ export class EnhancedLogger {
     if (this.options.enableFileLogging) {
       // File logging implementation would go here
     }
+  }
+
+  /**
+   * Check if running in STDIO mode (MCP protocol)
+   */
+  private isStdioMode(): boolean {
+    // Check if we're running in STDIO mode for MCP protocol
+    // This prevents console output from corrupting the JSON stream
+    return process.argv.includes('--stdio') || 
+           !process.env.PORT || 
+           process.env.MCP_STDIO === 'true' ||
+           (process.stdin.isTTY === false && process.stdout.isTTY === false);
   }
 
   private formatEntry(entry: LogEntry): string {

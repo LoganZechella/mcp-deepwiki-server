@@ -19,3 +19,5 @@ dist
 .cursorignore
 
 package-lock.json
+.cache/
+summarize/*

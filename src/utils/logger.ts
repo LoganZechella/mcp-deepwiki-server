@@ -16,6 +16,11 @@ class SimpleLogger implements Logger {
   constructor(private component: string) {}
 
   private log(level: LogLevel, message: string, ...args: any[]): void {
+    // Skip console output in STDIO mode to avoid corrupting MCP protocol
+    if (this.isStdioMode()) {
+      return;
+    }
+
     const timestamp = new Date().toISOString();
     const prefix = `[${timestamp}] [${level.toUpperCase()}] [${this.component}]`;
     
@@ -35,6 +40,18 @@ class SimpleLogger implements Logger {
         console.error(prefix, message, ...args);
         break;
     }
+  }
+
+  /**
+   * Check if running in STDIO mode (MCP protocol)
+   */
+  private isStdioMode(): boolean {
+    // Check if we're running in STDIO mode for MCP protocol
+    // This prevents console output from corrupting the JSON stream
+    return process.argv.includes('--stdio') || 
+           !process.env.PORT || 
+           process.env.MCP_STDIO === 'true' ||
+           (process.stdin.isTTY === false && process.stdout.isTTY === false);
   }
 
   debug(message: string, ...args: any[]): void {
