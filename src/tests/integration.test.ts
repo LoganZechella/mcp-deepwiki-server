@@ -1,271 +1,167 @@
-import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
-import { CacheService } from '../services/cache-service';
-import { retry, CircuitBreaker, RetryConditions } from '../utils/retry';
-import { ConcurrencyQueue, RateLimiter } from '../utils/concurrency';
-import { createEnhancedLogger } from '../utils/enhanced-logger';
+import { describe, it, expect, beforeEach } from '@jest/globals';
+import { DeepWikiService } from '../services/deepwiki.js';
+import { Logger } from '../utils/logger.js';
 
-describe('Phase 1 Integration Tests', () => {
-  let cacheService: CacheService;
-  let tempCacheDir: string;
+describe('DeepWikiService - Integration Tests', () => {
+  let service: DeepWikiService;
+  let logger: Logger;
 
-  beforeAll(async () => {
-    tempCacheDir = '.test-cache-integration';
-    cacheService = new CacheService(tempCacheDir, {
-      ttl: 5000, // 5 seconds for testing
-      cleanupInterval: 2000 // 2 seconds for testing
-    });
+  beforeEach(() => {
+    logger = new Logger();
+    service = new DeepWikiService(logger);
   });
 
-  afterAll(async () => {
-    cacheService.shutdown();
-    // Cleanup test cache directory
-    try {
-      const { promises: fs } = await import('fs');
-      await fs.rm(tempCacheDir, { recursive: true, force: true });
-    } catch (error) {
-      // Ignore cleanup errors
-    }
-  });
+  // These tests run against the real GitHub API
+  // Skip them if no GitHub token is available
+  const skipIntegrationTests = !process.env.GITHUB_TOKEN && process.env.NODE_ENV !== 'ci';
 
-  describe('Cache Service Integration', () => {
-    it('should cache and retrieve data successfully', async () => {
-      const key = 'test-integration-key';
-      const data = { message: 'Integration test data', timestamp: Date.now() };
-      
-      // Set data in cache
-      await cacheService.set(key, data);
-      
-      // Retrieve data from cache
-      const retrieved = await cacheService.get(key);
-      
-      expect(retrieved).toEqual(data);
-    });
+  describe('Real GitHub API Integration', () => {
+    const conditionalTest = skipIntegrationTests ? it.skip : it;
 
-    it('should handle cache expiration', async () => {
-      const key = 'expiring-integration-key';
-      const data = { message: 'This will expire' };
-      
-      // Set with short TTL
-      await cacheService.set(key, data, 100); // 100ms
-      
-      // Should be available immediately
-      let result = await cacheService.get(key);
-      expect(result).toEqual(data);
-      
-      // Wait for expiration
-      await new Promise(resolve => setTimeout(resolve, 150));
-      
-      // Should be expired
-      result = await cacheService.get(key);
-      expect(result).toBeNull();
-    });
-
-    it('should provide cache statistics', async () => {
-      await cacheService.set('stats-key-1', 'data1');
-      await cacheService.set('stats-key-2', 'data2');
-      
-      const stats = await cacheService.getStats();
-      
-      expect(stats.memoryEntries).toBeGreaterThanOrEqual(2);
-      expect(stats.totalSize).toBeGreaterThan(0);
-    });
-  });
-
-  describe('Retry Logic Integration', () => {
-    it('should retry failed operations and eventually succeed', async () => {
-      let attempts = 0;
-      const mockOperation = async () => {
-        attempts++;
-        if (attempts < 3) {
-          throw new Error(`Attempt ${attempts} failed`);
-        }
-        return 'success';
+    conditionalTest('should search for real repositories', async () => {
+      const params = {
+        query: 'react',
+        language: 'JavaScript',
+        limit: 5
       };
 
-      const result = await retry(mockOperation, {
-        maxAttempts: 5,
-        baseDelay: 10,
-        retryCondition: RetryConditions.always
-      });
+      const results = await service.searchRepositories(params);
 
-      expect(result).toBe('success');
-      expect(attempts).toBe(3);
-    });
+      expect(results).toBeDefined();
+      expect(Array.isArray(results)).toBe(true);
+      expect(results.length).toBeGreaterThan(0);
+      expect(results.length).toBeLessThanOrEqual(5);
 
-    it('should respect retry conditions', async () => {
-      const mockOperation = async () => {
-        throw new Error('Non-retryable error');
+      // Verify result structure
+      const firstResult = results[0];
+      expect(firstResult).toHaveProperty('name');
+      expect(firstResult).toHaveProperty('owner');
+      expect(firstResult).toHaveProperty('description');
+      expect(firstResult).toHaveProperty('url');
+      expect(firstResult).toHaveProperty('githubUrl');
+      expect(firstResult).toHaveProperty('language');
+      expect(firstResult).toHaveProperty('topics');
+      expect(firstResult).toHaveProperty('stars');
+      expect(firstResult).toHaveProperty('forks');
+
+      // Verify DeepWiki URL format
+      expect(firstResult.url).toMatch(/^https:\/\/deepwiki\.com\/[^\/]+\/[^\/]+$/);
+    }, 10000);
+
+    conditionalTest('should handle topic filtering with real API', async () => {
+      const params = {
+        query: 'machine learning',
+        language: 'Python',
+        topics: ['ml'],
+        limit: 3
       };
 
-      await expect(retry(mockOperation, {
-        maxAttempts: 3,
-        retryCondition: RetryConditions.never
-      })).rejects.toThrow('Non-retryable error');
-    });
-  });
+      const results = await service.searchRepositories(params);
 
-  describe('Circuit Breaker Integration', () => {
-    it('should open circuit after failure threshold', async () => {
-      const circuitBreaker = new CircuitBreaker({
-        failureThreshold: 2,
-        resetTimeout: 1000
-      });
+      expect(results).toBeDefined();
+      expect(Array.isArray(results)).toBe(true);
+      
+      // If results are found, verify they match the criteria
+      if (results.length > 0) {
+        const firstResult = results[0];
+        expect(firstResult.language).toBe('Python');
+      }
+    }, 10000);
 
-      const failingOperation = async () => {
-        throw new Error('Operation failed');
+    conditionalTest('should handle empty search results gracefully', async () => {
+      const params = {
+        query: 'this-should-not-exist-unique-query-12345',
+        limit: 10
       };
 
-      // Trigger failures to open circuit
-      for (let i = 0; i < 2; i++) {
-        try {
-          await circuitBreaker.execute(failingOperation);
-        } catch (error) {
-          // Expected failures
-        }
+      const results = await service.searchRepositories(params);
+
+      expect(results).toBeDefined();
+      expect(Array.isArray(results)).toBe(true);
+      expect(results.length).toBe(0);
+    }, 10000);
+
+    conditionalTest('should respect rate limits and provide meaningful errors', async () => {
+      // This test simulates hitting rate limits by making many requests
+      // Skip if we don't want to consume API quota
+      if (process.env.SKIP_RATE_LIMIT_TEST === 'true') {
+        return;
       }
 
-      // Circuit should be open now
-      await expect(circuitBreaker.execute(failingOperation))
-        .rejects.toThrow('Circuit breaker is OPEN');
-    });
-  });
-
-  describe('Concurrency Management Integration', () => {
-    it('should process tasks with concurrency limits', async () => {
-      const queue = new ConcurrencyQueue({ maxConcurrent: 2, timeout: 5000 });
-      
-      let runningCount = 0;
-      let maxRunning = 0;
-      
-      const createTask = (id: number) => async () => {
-        runningCount++;
-        maxRunning = Math.max(maxRunning, runningCount);
-        
-        await new Promise(resolve => setTimeout(resolve, 50));
-        
-        runningCount--;
-        return `task-${id}`;
+      const params = {
+        query: 'test',
+        limit: 1
       };
 
-      const tasks = Array.from({ length: 4 }, (_, i) => createTask(i));
-      const results = await queue.addAll(tasks);
-
-      expect(results).toHaveLength(4);
-      expect(maxRunning).toBeLessThanOrEqual(2); // Should respect concurrency limit
-    });
-
-    it('should handle task failures gracefully', async () => {
-      const queue = new ConcurrencyQueue({ maxConcurrent: 2 });
-
-      const tasks = [
-        () => Promise.resolve('success1'),
-        () => Promise.reject(new Error('failure')),
-        () => Promise.resolve('success2')
-      ];
-
-      const results = await queue.addAllSettled(tasks);
-
-      expect(results).toHaveLength(3);
-      expect(results[0].status).toBe('fulfilled');
-      expect(results[1].status).toBe('rejected');
-      expect(results[2].status).toBe('fulfilled');
-    });
-  });
-
-  describe('Rate Limiter Integration', () => {
-    it('should enforce rate limits', async () => {
-      const rateLimiter = new RateLimiter(2, 10); // 2 tokens, 10 per second
-
-      // Use up tokens
-      await rateLimiter.acquire();
-      await rateLimiter.acquire();
-
-      expect(rateLimiter.getTokens()).toBe(0);
-
-      // Next acquisition should wait
-      const startTime = Date.now();
-      await rateLimiter.acquire();
-      const endTime = Date.now();
-
-      expect(endTime - startTime).toBeGreaterThan(50); // Should have waited
-    });
-  });
-
-  describe('Enhanced Logger Integration', () => {
-    it('should create logger with correlation support', () => {
-      const logger = createEnhancedLogger('test-component');
-      
-      logger.setCorrelationId('test-correlation-id');
-      expect(logger.getCorrelationId()).toBe('test-correlation-id');
-    });
-
-    it('should time operations and collect metrics', async () => {
-      const logger = createEnhancedLogger('test-metrics');
-      
-      const result = await logger.time('test-operation', async () => {
-        await new Promise(resolve => setTimeout(resolve, 50));
-        return 'operation-result';
-      });
-
-      expect(result).toBe('operation-result');
-      
-      const metrics = logger.getMetrics();
-      expect(metrics['test-operation']).toBeDefined();
-      expect(metrics['test-operation'].count).toBe(1);
-      expect(metrics['test-operation'].averageDuration).toBeGreaterThan(40);
-    });
-  });
-
-  describe('End-to-End Integration', () => {
-    it('should integrate cache, retry, and concurrency together', async () => {
-      const cache = new CacheService('.test-e2e-cache', { ttl: 10000 });
-      const queue = new ConcurrencyQueue({ maxConcurrent: 3 });
-      
-      // Simulate fetching data with caching and retry
-      const fetchWithCache = async (id: number): Promise<string> => {
-        const cacheKey = `data-${id}`;
-        
-        // Check cache first
-        const cached = await cache.get<string>(cacheKey);
-        if (cached) {
-          return cached;
-        }
-        
-        // Simulate network operation with retry
-        const result = await retry(async () => {
-          // Simulate occasional failures
-          if (Math.random() < 0.3) {
-            throw new Error('Network error');
-          }
-          return `fetched-data-${id}`;
-        }, {
-          maxAttempts: 3,
-          baseDelay: 10,
-          retryCondition: RetryConditions.always
-        });
-        
-        // Cache the result
-        await cache.set(cacheKey, result);
-        return result;
-      };
-
-      // Process multiple requests concurrently
-      const tasks = Array.from({ length: 5 }, (_, i) => () => fetchWithCache(i));
-      const results = await queue.addAll(tasks);
-
-      expect(results).toHaveLength(5);
-      results.forEach((result, index) => {
-        expect(result).toBe(`fetched-data-${index}`);
-      });
-
-      // Cleanup
-      cache.shutdown();
       try {
-        const { promises: fs } = await import('fs');
-        await fs.rm('.test-e2e-cache', { recursive: true, force: true });
+        // Make a single request to verify the API is working
+        const results = await service.searchRepositories(params);
+        expect(results).toBeDefined();
       } catch (error) {
-        // Ignore cleanup errors
+        // If we hit a rate limit, verify the error message is helpful
+        if ((error as Error).message.includes('rate limit')) {
+          expect((error as Error).message).toContain('GitHub API rate limit');
+          expect((error as Error).message).toContain('GITHUB_TOKEN');
+        } else {
+          throw error;
+        }
       }
+    }, 10000);
+  });
+
+  describe('Error Handling Integration', () => {
+    it('should handle malformed search queries', async () => {
+      const params = {
+        query: '', // Empty query
+        limit: 10
+      };
+
+      await expect(service.searchRepositories(params)).rejects.toThrow();
+    });
+
+    it('should handle invalid limit values', async () => {
+      const params = {
+        query: 'test',
+        limit: 0
+      };
+
+      const results = await service.searchRepositories(params);
+      expect(results).toHaveLength(0);
+    });
+  });
+
+  describe('Search Query Building', () => {
+    it('should build query correctly with all parameters', () => {
+      // Access private method for testing (casting to any)
+      const buildQuery = (service as any).buildGitHubSearchQuery;
+      
+      const params = {
+        query: 'web framework',
+        language: 'TypeScript',
+        topics: ['web', 'framework'],
+        limit: 10
+      };
+
+      const query = buildQuery(params);
+      
+      expect(query).toContain('web framework');
+      expect(query).toContain('language:TypeScript');
+      expect(query).toContain('topic:web');
+      expect(query).toContain('topic:framework');
+      expect(query).toContain('archived:false');
+      expect(query).toContain('fork:false');
+    });
+
+    it('should handle queries with special characters', () => {
+      const buildQuery = (service as any).buildGitHubSearchQuery;
+      
+      const params = {
+        query: 'C++ library',
+        limit: 10
+      };
+
+      const query = buildQuery(params);
+      expect(query).toContain('C++ library');
     });
   });
 });

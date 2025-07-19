@@ -2,60 +2,46 @@
 #!/bin/bash
 
 # MCP DeepWiki Server Startup Script
-# Usage: ./start.sh [stdio|http] [port]
+# Optimized for Claude Desktop compatibility
 
 set -e
 
-# Default values
-MODE="${1:-stdio}"
-PORT="${2:-4000}"
+echo "Starting MCP DeepWiki Server (Claude Desktop Optimized)..."
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Set Claude Desktop compatible environment variables
+export MCP_TIMEOUT=45000  # 45 seconds timeout
+export LOG_LEVEL=info
+export NODE_ENV=production
 
-echo -e "${BLUE}🚀 Starting MCP DeepWiki Server...${NC}"
-
-# Check if dist directory exists
-if [ ! -d "dist" ]; then
-    echo -e "${YELLOW}⚠️  Building project first...${NC}"
-    npm run build 2>/dev/null || npx tsc
-fi
-
-# Check if main file exists
-if [ ! -f "dist/index.js" ]; then
-    echo -e "${RED}❌ dist/index.js not found. Please run 'npm run build' first.${NC}"
+# Check if Node.js is available
+if ! command -v node &> /dev/null; then
+    echo "Error: Node.js is not installed or not in PATH"
     exit 1
 fi
 
-echo -e "${GREEN}✅ Project built successfully${NC}"
+# Check Node.js version (require 18+)
+NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
+if [ "$NODE_VERSION" -lt 18 ]; then
+    echo "Error: Node.js version 18 or higher is required (current: $(node -v))"
+    exit 1
+fi
 
-# Set permissions
-chmod +x dist/index.js
+# Build the project if dist doesn't exist
+if [ ! -d "dist" ]; then
+    echo "Building TypeScript project..."
+    npm run build
+fi
 
-case "$MODE" in
-    "stdio")
-        echo -e "${BLUE}📡 Starting in STDIO mode (for local editors)...${NC}"
-        echo -e "${YELLOW}💡 Use Ctrl+C to stop the server${NC}"
-        node dist/index.js --stdio
-        ;;
-    "http")
-        echo -e "${BLUE}🌐 Starting in HTTP mode on port ${PORT}...${NC}"
-        echo -e "${YELLOW}💡 Health check: http://localhost:${PORT}/health${NC}"
-        echo -e "${YELLOW}💡 MCP endpoint: http://localhost:${PORT}/mcp${NC}"
-        export PORT="$PORT"
-        node dist/index.js
-        ;;
-    *)
-        echo -e "${RED}❌ Invalid mode: $MODE${NC}"
-        echo -e "${YELLOW}Usage: $0 [stdio|http] [port]${NC}"
-        echo -e "${YELLOW}Examples:${NC}"
-        echo -e "${YELLOW}  $0 stdio           # Start in STDIO mode${NC}"
-        echo -e "${YELLOW}  $0 http            # Start in HTTP mode on port 4000${NC}"
-        echo -e "${YELLOW}  $0 http 3000       # Start in HTTP mode on port 3000${NC}"
-        exit 1
-        ;;
-esac
+# Check if build was successful
+if [ ! -f "dist/index.js" ]; then
+    echo "Error: Build failed - dist/index.js not found"
+    exit 1
+fi
+
+echo "MCP DeepWiki Server starting..."
+echo "Timeout: ${MCP_TIMEOUT}ms"
+echo "Log Level: ${LOG_LEVEL}"
+
+# Start the server
+exec node dist/index.js "$@"
+

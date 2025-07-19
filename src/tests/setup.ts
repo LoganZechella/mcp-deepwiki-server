@@ -1,50 +1,26 @@
-
-// Jest test setup file
+// Global test setup for ES modules
 import { jest } from '@jest/globals';
 
-// Increase timeout for integration tests
-jest.setTimeout(10000);
+// Mock environment variables for testing
+process.env.LOG_LEVEL = 'error'; // Suppress logs during testing
+process.env.NODE_ENV = 'test';
 
-// Mock console methods to reduce noise in tests
-const originalConsole = { ...console };
+// Mock console methods to prevent test output pollution
+const originalConsoleError = console.error;
+const originalConsoleWarn = console.warn;
+const originalConsoleInfo = console.info;
 
-beforeEach(() => {
-  // Reset console mocks before each test
-  console.log = jest.fn();
-  console.info = jest.fn();
-  console.warn = jest.fn();
+beforeAll(() => {
   console.error = jest.fn();
-  console.debug = jest.fn();
+  console.warn = jest.fn();
+  console.info = jest.fn();
 });
 
-afterEach(() => {
-  // Restore console after each test
-  Object.assign(console, originalConsole);
+afterAll(() => {
+  console.error = originalConsoleError;
+  console.warn = originalConsoleWarn;
+  console.info = originalConsoleInfo;
 });
 
-// Global test utilities
-global.testUtils = {
-  sleep: (ms: number) => new Promise(resolve => setTimeout(resolve, ms)),
-  
-  createMockFetch: (responses: any[]) => {
-    let callCount = 0;
-    return jest.fn().mockImplementation(() => {
-      const response = responses[callCount] || responses[responses.length - 1];
-      callCount++;
-      return Promise.resolve({
-        ok: response.ok !== false,
-        status: response.status || 200,
-        text: () => Promise.resolve(response.text || ''),
-        json: () => Promise.resolve(response.json || {})
-      });
-    });
-  }
-};
-
-// Declare global types for TypeScript
-declare global {
-  var testUtils: {
-    sleep: (ms: number) => Promise<void>;
-    createMockFetch: (responses: any[]) => jest.Mock;
-  };
-}
+// Global timeout for all tests
+jest.setTimeout(30000);
